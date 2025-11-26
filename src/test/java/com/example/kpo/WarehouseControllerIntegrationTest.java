@@ -135,6 +135,21 @@ class WarehouseControllerIntegrationTest {
     }
 
     @Test
+    @DisplayName("POST /warehouses отклоняет пустое имя склада")
+    void createWarehouseValidationError() throws Exception {
+        Warehouse payload = new Warehouse(null, "", "инфо");
+
+        mockMvc.perform(post("/warehouses")
+                        .header("Authorization", "Bearer " + obtainToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.name", is("Warehouse name is required")));
+
+        assertThat(warehouseRepository.findAll()).isEmpty();
+    }
+
+    @Test
     @DisplayName("PUT /warehouses/{id} обновляет склад")
     void updateWarehouseReturnsUpdated() throws Exception {
         Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Старое имя", "старое"));
@@ -163,6 +178,24 @@ class WarehouseControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(payload)))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("PUT /warehouses/{id} отклоняет пустое имя склада")
+    void updateWarehouseValidationError() throws Exception {
+        Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Старое имя", "старое"));
+        Warehouse payload = new Warehouse(null, "", "обновлённое");
+
+        mockMvc.perform(put("/warehouses/{id}", warehouse.getId())
+                        .header("Authorization", "Bearer " + obtainToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.name", is("Warehouse name is required")));
+
+        Warehouse refreshed = warehouseRepository.findById(warehouse.getId()).orElseThrow();
+        assertThat(refreshed.getName()).isEqualTo("Старое имя");
+        assertThat(refreshed.getInfo()).isEqualTo("старое");
     }
 
     @Test
