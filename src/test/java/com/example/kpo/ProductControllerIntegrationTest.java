@@ -2,12 +2,13 @@ package com.example.kpo;
 
 import com.example.kpo.dto.LoginRequest;
 import com.example.kpo.entity.Admin;
+import com.example.kpo.entity.Category;
 import com.example.kpo.entity.Product;
-import com.example.kpo.entity.Warehouse;
 import com.example.kpo.repository.AdminRepository;
-import com.example.kpo.repository.ProductRepository;
-import com.example.kpo.repository.WarehouseRepository;
+import com.example.kpo.repository.CategoryRepository;
 import com.example.kpo.repository.MovementRepository;
+import com.example.kpo.repository.ProductRepository;
+import com.example.kpo.repository.WarehouseProductRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -45,10 +46,13 @@ class ProductControllerIntegrationTest {
     private ProductRepository productRepository;
 
     @Autowired
-    private WarehouseRepository warehouseRepository;
+    private CategoryRepository categoryRepository;
 
     @Autowired
     private MovementRepository movementRepository;
+
+    @Autowired
+    private WarehouseProductRepository warehouseProductRepository;
 
     @Autowired
     private AdminRepository adminRepository;
@@ -59,25 +63,33 @@ class ProductControllerIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    private Category defaultCategory;
+
     @BeforeEach
     void setUp() {
         movementRepository.deleteAll();
+        warehouseProductRepository.deleteAll();
         productRepository.deleteAll();
-        warehouseRepository.deleteAll();
+        categoryRepository.deleteAll();
         adminRepository.deleteAll();
 
         Admin admin = new Admin();
         admin.setUsername(USERNAME);
         admin.setPassword(passwordEncoder.encode(PASSWORD));
         adminRepository.save(admin);
+
+        defaultCategory = categoryRepository.save(new Category(null, "Категория"));
     }
 
     @Test
     @DisplayName("GET /products возвращает все товары")
     void getAllProductsReturnsData() throws Exception {
-        Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Основной", "info"));
-        Product first = productRepository.save(new Product(null, "Товар 1", 5, warehouse));
-        Product second = productRepository.save(new Product(null, "Товар 2", 10, warehouse));
+        Product first = new Product(null, "Товар 1", null);
+        first.setCategory(defaultCategory);
+        productRepository.save(first);
+        Product second = new Product(null, "Товар 2", null);
+        second.setCategory(defaultCategory);
+        productRepository.save(second);
 
         mockMvc.perform(get("/products")
                         .header("Authorization", "Bearer " + obtainToken()))
@@ -92,25 +104,24 @@ class ProductControllerIntegrationTest {
     @Test
     @DisplayName("GET /products/{id} возвращает товар по идентификатору")
     void getProductByIdReturnsEntity() throws Exception {
-        Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Склад", "инфо"));
-        Product product = productRepository.save(new Product(null, "Компьютер", 3, warehouse));
+        Product product = new Product(null, "Компьютер", "описание");
+        product.setCategory(defaultCategory);
+        productRepository.save(product);
 
         mockMvc.perform(get("/products/{id}", product.getId())
                         .header("Authorization", "Bearer " + obtainToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id", is(product.getId().intValue())))
                 .andExpect(jsonPath("$.name", is("Компьютер")))
-                .andExpect(jsonPath("$.count", is(3)))
-                .andExpect(jsonPath("$.warehouse.id", is(warehouse.getId().intValue())));
+                .andExpect(jsonPath("$.category.id", is(defaultCategory.getId().intValue())));
     }
 
     @Test
-    @DisplayName("POST /products создаёт товар")
+    @DisplayName("POST /products создаёт товар с категориями")
     void createProductReturnsCreated() throws Exception {
-        Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Склад", "инфо"));
-        Warehouse warehouseReference = new Warehouse();
-        warehouseReference.setId(warehouse.getId());
-        Product payload = new Product(null, "Телефон", 7, warehouseReference);
+        Category shoes = categoryRepository.save(new Category(null, "Обувь"));
+        Product payload = new Product(null, "Кроссовки", "зимние");
+        payload.setCategory(refCategory(shoes));
 
         mockMvc.perform(post("/products")
                         .header("Authorization", "Bearer " + obtainToken())
@@ -118,20 +129,17 @@ class ProductControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(payload)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").isNumber())
-                .andExpect(jsonPath("$.name", is("Телефон")))
-                .andExpect(jsonPath("$.count", is(7)))
-                .andExpect(jsonPath("$.warehouse.id", is(warehouse.getId().intValue())));
+                .andExpect(jsonPath("$.name", is("Кроссовки")))
+                .andExpect(jsonPath("$.category.id", is(shoes.getId().intValue())));
 
         assertThat(productRepository.findAll()).hasSize(1);
     }
 
     @Test
-    @DisplayName("POST /products проверяет валидацию данных")
+    @DisplayName("POST /products проверяет валидацию имени")
     void createProductValidationError() throws Exception {
-        Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Склад", "инфо"));
-        Warehouse ref = new Warehouse();
-        ref.setId(warehouse.getId());
-        Product payload = new Product(null, "", 5, ref);
+        Product payload = new Product(null, "", null);
+        payload.setCategory(refCategory(defaultCategory));
 
         mockMvc.perform(post("/products")
                         .header("Authorization", "Bearer " + obtainToken())
@@ -142,30 +150,30 @@ class ProductControllerIntegrationTest {
     }
 
     @Test
-    @DisplayName("POST /products возвращает 404 при отсутствии склада")
-    void createProductWarehouseNotFound() throws Exception {
-        Warehouse ref = new Warehouse();
+    @DisplayName("POST /products возвращает 404 при отсутствии категории")
+    void createProductCategoryNotFound() throws Exception {
+        Category ref = new Category();
         ref.setId(999L);
-        Product payload = new Product(null, "Стол", 1, ref);
+        Product payload = new Product(null, "Стол", null);
+        payload.setCategory(ref);
 
         mockMvc.perform(post("/products")
                         .header("Authorization", "Bearer " + obtainToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(payload)))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error", is("Warehouse not found")));
+                .andExpect(jsonPath("$.error", is("Category not found")));
     }
 
     @Test
-    @DisplayName("PUT /products/{id} обновляет товар")
+    @DisplayName("PUT /products/{id} обновляет имя и категории")
     void updateProductReturnsUpdated() throws Exception {
-        Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Склад", "инфо"));
-        Warehouse updatedWarehouse = warehouseRepository.save(new Warehouse(null, "Новый склад", "info2"));
-        Product product = productRepository.save(new Product(null, "Старое имя", 5, warehouse));
-
-        Warehouse ref = new Warehouse();
-        ref.setId(updatedWarehouse.getId());
-        Product payload = new Product(null, "Новое имя", 9, ref);
+        Product product = new Product(null, "Старое имя", null);
+        product.setCategory(defaultCategory);
+        productRepository.save(product);
+        Category category = categoryRepository.save(new Category(null, "Аксессуары"));
+        Product payload = new Product(null, "Новое имя", "описание");
+        payload.setCategory(refCategory(category));
 
         mockMvc.perform(put("/products/{id}", product.getId())
                         .header("Authorization", "Bearer " + obtainToken())
@@ -173,22 +181,17 @@ class ProductControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(payload)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name", is("Новое имя")))
-                .andExpect(jsonPath("$.count", is(9)))
-                .andExpect(jsonPath("$.warehouse.id", is(updatedWarehouse.getId().intValue())));
+                .andExpect(jsonPath("$.category.id", is(category.getId().intValue())));
 
         Product refreshed = productRepository.findById(product.getId()).orElseThrow();
         assertThat(refreshed.getName()).isEqualTo("Новое имя");
-        assertThat(refreshed.getCount()).isEqualTo(9);
-        assertThat(refreshed.getWarehouse().getId()).isEqualTo(updatedWarehouse.getId());
     }
 
     @Test
     @DisplayName("PUT /products/{id} возвращает 404 если товара нет")
     void updateProductNotFound() throws Exception {
-        Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Склад", "инфо"));
-        Warehouse ref = new Warehouse();
-        ref.setId(warehouse.getId());
-        Product payload = new Product(null, "Имя", 1, ref);
+        Product payload = new Product(null, "Имя", null);
+        payload.setCategory(refCategory(defaultCategory));
 
         mockMvc.perform(put("/products/{id}", 12345)
                         .header("Authorization", "Bearer " + obtainToken())
@@ -200,8 +203,9 @@ class ProductControllerIntegrationTest {
     @Test
     @DisplayName("DELETE /products/{id} удаляет товар")
     void deleteProductReturnsNoContent() throws Exception {
-        Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Склад", "инфо"));
-        Product product = productRepository.save(new Product(null, "Удаляемый", 2, warehouse));
+        Product product = new Product(null, "Удаляемый", null);
+        product.setCategory(defaultCategory);
+        productRepository.save(product);
 
         mockMvc.perform(delete("/products/{id}", product.getId())
                         .header("Authorization", "Bearer " + obtainToken()))
@@ -216,6 +220,12 @@ class ProductControllerIntegrationTest {
         mockMvc.perform(delete("/products/{id}", 999)
                         .header("Authorization", "Bearer " + obtainToken()))
                 .andExpect(status().isNotFound());
+    }
+
+    private Category refCategory(Category category) {
+        Category ref = new Category();
+        ref.setId(category.getId());
+        return ref;
     }
 
     private String obtainToken() throws Exception {

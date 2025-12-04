@@ -1,5 +1,6 @@
 package com.example.kpo.entity;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -9,10 +10,15 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import jakarta.validation.Valid;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "movements")
@@ -32,11 +38,6 @@ public class Movement {
     private MovementType type;
 
     private String info;
-
-    @NotNull(message = "Product is required")
-    @ManyToOne(optional = false)
-    @JoinColumn(name = "product_id", nullable = false)
-    private Product product;
 
     @NotNull(message = "Employee is required")
     @ManyToOne(optional = false)
@@ -60,6 +61,10 @@ public class Movement {
     @JoinColumn(name = "target_warehouse_id")
     private Warehouse targetWarehouse;
 
+    @Valid
+    @OneToMany(mappedBy = "movement", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<MovementProduct> items = new ArrayList<>();
+
     public Movement() {
     }
 
@@ -67,22 +72,24 @@ public class Movement {
                     LocalDate date,
                     MovementType type,
                     String info,
-                    Product product,
                     Employee employee,
                     Counterparty counterparty,
                     Warehouse warehouse,
                     Employee targetEmployee,
-                    Warehouse targetWarehouse) {
+                    Warehouse targetWarehouse,
+                    List<MovementProduct> items) {
         this.id = id;
         this.date = date;
         this.type = type;
         this.info = info;
-        this.product = product;
         this.employee = employee;
         this.counterparty = counterparty;
         this.warehouse = warehouse;
         this.targetEmployee = targetEmployee;
         this.targetWarehouse = targetWarehouse;
+        if (items != null) {
+            this.items = items;
+        }
     }
 
     public Long getId() {
@@ -115,14 +122,6 @@ public class Movement {
 
     public void setInfo(String info) {
         this.info = info;
-    }
-
-    public Product getProduct() {
-        return product;
-    }
-
-    public void setProduct(Product product) {
-        this.product = product;
     }
 
     public Employee getEmployee() {
@@ -163,5 +162,13 @@ public class Movement {
 
     public void setTargetWarehouse(Warehouse targetWarehouse) {
         this.targetWarehouse = targetWarehouse;
+    }
+
+    public List<MovementProduct> getItems() {
+        return items;
+    }
+
+    public void setItems(List<MovementProduct> items) {
+        this.items = items;
     }
 }

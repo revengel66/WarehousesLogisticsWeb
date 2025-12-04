@@ -8,7 +8,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -24,24 +23,21 @@ public class Product {
     @Column(nullable = false)
     private String name;
 
-    @NotNull(message = "Product count is required")
-    @Min(value = 0, message = "Product count must be greater or equal to 0")
-    @Column(nullable = false)
-    private Integer count;
+    @Column
+    private String info;
 
-    @NotNull(message = "Warehouse is required")
+    @NotNull(message = "Category is required")
     @ManyToOne(optional = false)
-    @JoinColumn(name = "warehouse_id", nullable = false)
-    private Warehouse warehouse;
+    @JoinColumn(name = "category_id", nullable = false)
+    private Category category;
 
     public Product() {
     }
 
-    public Product(Long id, String name, Integer count, Warehouse warehouse) {
+    public Product(Long id, String name, String info) {
         this.id = id;
         this.name = name;
-        this.count = count;
-        this.warehouse = warehouse;
+        this.info = info;
     }
 
     public Long getId() {
@@ -60,19 +56,19 @@ public class Product {
         this.name = name;
     }
 
-    public Integer getCount() {
-        return count;
+    public String getInfo() {
+        return info;
     }
 
-    public void setCount(Integer count) {
-        this.count = count;
+    public void setInfo(String info) {
+        this.info = info;
     }
 
-    public Warehouse getWarehouse() {
-        return warehouse;
+    public Category getCategory() {
+        return category;
     }
 
-    public void setWarehouse(Warehouse warehouse) {
-        this.warehouse = warehouse;
+    public void setCategory(Category category) {
+        this.category = category;
     }
 }

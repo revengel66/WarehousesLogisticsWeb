@@ -2,17 +2,22 @@ package com.example.kpo;
 
 import com.example.kpo.dto.LoginRequest;
 import com.example.kpo.entity.Admin;
+import com.example.kpo.entity.Category;
 import com.example.kpo.entity.Counterparty;
 import com.example.kpo.entity.Employee;
 import com.example.kpo.entity.Movement;
+import com.example.kpo.entity.MovementProduct;
 import com.example.kpo.entity.MovementType;
 import com.example.kpo.entity.Product;
 import com.example.kpo.entity.Warehouse;
+import com.example.kpo.entity.WarehouseProduct;
 import com.example.kpo.repository.AdminRepository;
+import com.example.kpo.repository.CategoryRepository;
 import com.example.kpo.repository.CounterpartyRepository;
 import com.example.kpo.repository.EmployeeRepository;
 import com.example.kpo.repository.MovementRepository;
 import com.example.kpo.repository.ProductRepository;
+import com.example.kpo.repository.WarehouseProductRepository;
 import com.example.kpo.repository.WarehouseRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +32,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.LocalDate;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
@@ -65,6 +71,12 @@ class MovementControllerIntegrationTest {
     private WarehouseRepository warehouseRepository;
 
     @Autowired
+    private CategoryRepository categoryRepository;
+
+    @Autowired
+    private WarehouseProductRepository warehouseProductRepository;
+
+    @Autowired
     private AdminRepository adminRepository;
 
     @Autowired
@@ -74,6 +86,7 @@ class MovementControllerIntegrationTest {
     private ObjectMapper objectMapper;
 
     private Product product;
+    private Category productCategory;
     private Employee employee;
     private Employee targetEmployee;
     private Counterparty counterparty;
@@ -83,10 +96,12 @@ class MovementControllerIntegrationTest {
     @BeforeEach
     void setUp() {
         movementRepository.deleteAll();
+        warehouseProductRepository.deleteAll();
         productRepository.deleteAll();
         employeeRepository.deleteAll();
         counterpartyRepository.deleteAll();
         warehouseRepository.deleteAll();
+        categoryRepository.deleteAll();
         adminRepository.deleteAll();
 
         Admin admin = new Admin();
@@ -99,16 +114,19 @@ class MovementControllerIntegrationTest {
         employee = employeeRepository.save(new Employee(null, "Иван", "+79000000001", "инициатор"));
         targetEmployee = employeeRepository.save(new Employee(null, "Пётр", "+79000000002", "получатель"));
         counterparty = counterpartyRepository.save(new Counterparty(null, "ООО Поставщик", "+79001234567", "поставщик"));
-        product = productRepository.save(new Product(null, "Товар", 5, sourceWarehouse));
+        productCategory = categoryRepository.save(new Category(null, "Перемещение"));
+        product = new Product(null, "Товар", "описание");
+        product.setCategory(productCategory);
+        productRepository.save(product);
     }
 
     @Test
     @DisplayName("GET /movements возвращает список операций")
     void getAllMovementsReturnsData() throws Exception {
-        Movement inbound = movementRepository.save(new Movement(null, LocalDate.now(), MovementType.INBOUND,
-                "приход", product, employee, counterparty, sourceWarehouse, null, null));
-        Movement outbound = movementRepository.save(new Movement(null, LocalDate.now(), MovementType.OUTBOUND,
-                "расход", product, employee, counterparty, sourceWarehouse, null, null));
+        Movement inbound = createMovementEntity(MovementType.INBOUND, "приход",
+                sourceWarehouse, null, employee, null, counterparty, product, 5);
+        Movement outbound = createMovementEntity(MovementType.OUTBOUND, "расход",
+                sourceWarehouse, null, employee, null, counterparty, product, 2);
 
         mockMvc.perform(get("/movements")
                         .header("Authorization", "Bearer " + obtainToken()))
@@ -123,28 +141,22 @@ class MovementControllerIntegrationTest {
     @Test
     @DisplayName("GET /movements/{id} возвращает операцию по идентификатору")
     void getMovementByIdReturnsEntity() throws Exception {
-        Movement movement = movementRepository.save(new Movement(null, LocalDate.now(), MovementType.INBOUND,
-                "инфо", product, employee, counterparty, sourceWarehouse, null, null));
+        Movement movement = createMovementEntity(MovementType.INBOUND, "инфо",
+                sourceWarehouse, null, employee, null, counterparty, product, 3);
 
         mockMvc.perform(get("/movements/{id}", movement.getId())
                         .header("Authorization", "Bearer " + obtainToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id", is(movement.getId().intValue())))
                 .andExpect(jsonPath("$.type", is("INBOUND")))
-                .andExpect(jsonPath("$.product.id", is(product.getId().intValue())));
+                .andExpect(jsonPath("$.items[0].product.id", is(product.getId().intValue())));
     }
 
     @Test
     @DisplayName("POST /movements создаёт приход (INBOUND)")
     void createInboundMovementReturnsCreated() throws Exception {
-        Movement payload = new Movement();
-        payload.setDate(LocalDate.now());
-        payload.setType(MovementType.INBOUND);
-        payload.setInfo("приход");
-        payload.setProduct(refProduct(product));
-        payload.setEmployee(refEmployee(employee));
-        payload.setCounterparty(refCounterparty(counterparty));
-        payload.setWarehouse(refWarehouse(sourceWarehouse));
+        Movement payload = buildMovementPayload(MovementType.INBOUND, sourceWarehouse, null,
+                employee, null, counterparty, product, 5);
 
         mockMvc.perform(post("/movements")
                         .header("Authorization", "Bearer " + obtainToken())
@@ -153,23 +165,19 @@ class MovementControllerIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.type", is("INBOUND")))
                 .andExpect(jsonPath("$.counterparty.id", is(counterparty.getId().intValue())))
+                .andExpect(jsonPath("$.items[0].quantity", is(5)))
                 .andExpect(jsonPath("$.targetWarehouse").doesNotExist());
 
-        assertThat(movementRepository.findAll()).hasSize(1);
+        WarehouseProduct stock = warehouseProductRepository.findByWarehouseAndProduct(sourceWarehouse, product).orElseThrow();
+        assertThat(stock.getQuantity()).isEqualTo(5);
     }
 
     @Test
     @DisplayName("POST /movements создаёт перемещение (TRANSFER)")
     void createTransferMovementReturnsCreated() throws Exception {
-        Movement payload = new Movement();
-        payload.setDate(LocalDate.now());
-        payload.setType(MovementType.TRANSFER);
-        payload.setInfo("перемещение");
-        payload.setProduct(refProduct(product));
-        payload.setEmployee(refEmployee(employee));
-        payload.setWarehouse(refWarehouse(sourceWarehouse));
-        payload.setTargetEmployee(refEmployee(targetEmployee));
-        payload.setTargetWarehouse(refWarehouse(targetWarehouse));
+        warehouseProductRepository.save(new WarehouseProduct(sourceWarehouse, product, 10));
+        Movement payload = buildMovementPayload(MovementType.TRANSFER, sourceWarehouse, targetWarehouse,
+                employee, targetEmployee, null, product, 3);
 
         mockMvc.perform(post("/movements")
                         .header("Authorization", "Bearer " + obtainToken())
@@ -179,18 +187,18 @@ class MovementControllerIntegrationTest {
                 .andExpect(jsonPath("$.type", is("TRANSFER")))
                 .andExpect(jsonPath("$.targetEmployee.id", is(targetEmployee.getId().intValue())))
                 .andExpect(jsonPath("$.counterparty").doesNotExist());
+
+        WarehouseProduct sourceStock = warehouseProductRepository.findByWarehouseAndProduct(sourceWarehouse, product).orElseThrow();
+        WarehouseProduct targetStock = warehouseProductRepository.findByWarehouseAndProduct(targetWarehouse, product).orElseThrow();
+        assertThat(sourceStock.getQuantity()).isEqualTo(7);
+        assertThat(targetStock.getQuantity()).isEqualTo(3);
     }
 
     @Test
     @DisplayName("POST /movements проверяет правила типов")
     void createTransferMovementValidationError() throws Exception {
-        Movement payload = new Movement();
-        payload.setDate(LocalDate.now());
-        payload.setType(MovementType.TRANSFER);
-        payload.setProduct(refProduct(product));
-        payload.setEmployee(refEmployee(employee));
-        payload.setWarehouse(refWarehouse(sourceWarehouse));
-        payload.setCounterparty(refCounterparty(counterparty)); // запрещено для transfer
+        Movement payload = buildMovementPayload(MovementType.TRANSFER, sourceWarehouse, targetWarehouse,
+                employee, targetEmployee, counterparty, product, 1);
 
         mockMvc.perform(post("/movements")
                         .header("Authorization", "Bearer " + obtainToken())
@@ -203,19 +211,15 @@ class MovementControllerIntegrationTest {
     @Test
     @DisplayName("PUT /movements/{id} обновляет операцию")
     void updateMovementReturnsUpdated() throws Exception {
-        Movement existing = movementRepository.save(new Movement(null, LocalDate.now(), MovementType.INBOUND,
-                "старое", product, employee, counterparty, sourceWarehouse, null, null));
+        Movement initial = buildMovementPayload(MovementType.INBOUND, sourceWarehouse, null,
+                employee, null, counterparty, product, 4);
+        Long existingId = createMovementThroughApi(initial);
 
-        Movement payload = new Movement();
-        payload.setDate(LocalDate.now().plusDays(1));
-        payload.setType(MovementType.INBOUND);
+        Movement payload = buildMovementPayload(MovementType.INBOUND, targetWarehouse, null,
+                employee, null, counterparty, product, 6);
         payload.setInfo("обновлено");
-        payload.setProduct(refProduct(product));
-        payload.setEmployee(refEmployee(employee));
-        payload.setCounterparty(refCounterparty(counterparty));
-        payload.setWarehouse(refWarehouse(targetWarehouse));
 
-        mockMvc.perform(put("/movements/{id}", existing.getId())
+        mockMvc.perform(put("/movements/{id}", existingId)
                         .header("Authorization", "Bearer " + obtainToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(payload)))
@@ -223,21 +227,87 @@ class MovementControllerIntegrationTest {
                 .andExpect(jsonPath("$.info", is("обновлено")))
                 .andExpect(jsonPath("$.warehouse.id", is(targetWarehouse.getId().intValue())));
 
-        Movement refreshed = movementRepository.findById(existing.getId()).orElseThrow();
+        Movement refreshed = movementRepository.findById(existingId).orElseThrow();
         assertThat(refreshed.getInfo()).isEqualTo("обновлено");
+        WarehouseProduct sourceStock = warehouseProductRepository.findByWarehouseAndProduct(sourceWarehouse, product).orElseThrow();
+        WarehouseProduct newStock = warehouseProductRepository.findByWarehouseAndProduct(targetWarehouse, product).orElseThrow();
+        assertThat(sourceStock.getQuantity()).isEqualTo(0);
+        assertThat(newStock.getQuantity()).isEqualTo(6);
     }
 
     @Test
     @DisplayName("DELETE /movements/{id} удаляет операцию")
     void deleteMovementReturnsNoContent() throws Exception {
-        Movement movement = movementRepository.save(new Movement(null, LocalDate.now(), MovementType.INBOUND,
-                "удалить", product, employee, counterparty, sourceWarehouse, null, null));
+        Movement payload = buildMovementPayload(MovementType.INBOUND, sourceWarehouse, null,
+                employee, null, counterparty, product, 2);
+        Long movementId = createMovementThroughApi(payload);
 
-        mockMvc.perform(delete("/movements/{id}", movement.getId())
+        mockMvc.perform(delete("/movements/{id}", movementId)
                         .header("Authorization", "Bearer " + obtainToken()))
                 .andExpect(status().isNoContent());
 
-        assertThat(movementRepository.findById(movement.getId())).isEmpty();
+        assertThat(movementRepository.findById(movementId)).isEmpty();
+        WarehouseProduct stock = warehouseProductRepository.findByWarehouseAndProduct(sourceWarehouse, product).orElseThrow();
+        assertThat(stock.getQuantity()).isEqualTo(0);
+    }
+
+    private Movement createMovementEntity(MovementType type,
+                                          String info,
+                                          Warehouse warehouse,
+                                          Warehouse targetWarehouse,
+                                          Employee employee,
+                                          Employee targetEmployee,
+                                          Counterparty counterparty,
+                                          Product product,
+                                          int quantity) {
+        Movement movement = new Movement();
+        movement.setDate(LocalDate.now());
+        movement.setType(type);
+        movement.setInfo(info);
+        movement.setWarehouse(warehouse);
+        movement.setTargetWarehouse(targetWarehouse);
+        movement.setEmployee(employee);
+        movement.setTargetEmployee(targetEmployee);
+        movement.setCounterparty(counterparty);
+        MovementProduct item = new MovementProduct();
+        item.setMovement(movement);
+        item.setProduct(product);
+        item.setQuantity(quantity);
+        movement.getItems().add(item);
+        return movementRepository.save(movement);
+    }
+
+    private Movement buildMovementPayload(MovementType type,
+                                          Warehouse warehouse,
+                                          Warehouse targetWarehouse,
+                                          Employee employee,
+                                          Employee targetEmployee,
+                                          Counterparty counterparty,
+                                          Product product,
+                                          int quantity) {
+        Movement movement = new Movement();
+        movement.setDate(LocalDate.now());
+        movement.setType(type);
+        movement.setWarehouse(refWarehouse(warehouse));
+        movement.setTargetWarehouse(targetWarehouse != null ? refWarehouse(targetWarehouse) : null);
+        movement.setEmployee(refEmployee(employee));
+        movement.setTargetEmployee(targetEmployee != null ? refEmployee(targetEmployee) : null);
+        movement.setCounterparty(counterparty != null ? refCounterparty(counterparty) : null);
+        MovementProduct item = new MovementProduct();
+        item.setProduct(refProduct(product));
+        item.setQuantity(quantity);
+        movement.setItems(List.of(item));
+        return movement;
+    }
+
+    private Long createMovementThroughApi(Movement payload) throws Exception {
+        MvcResult result = mockMvc.perform(post("/movements")
+                        .header("Authorization", "Bearer " + obtainToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
     }
 
     private Product refProduct(Product saved) {
