@@ -1,9 +1,9 @@
 package com.example.kpo.service;
 
+import com.example.kpo.entity.Category;
 import com.example.kpo.entity.Product;
-import com.example.kpo.entity.Warehouse;
+import com.example.kpo.repository.CategoryRepository;
 import com.example.kpo.repository.ProductRepository;
-import com.example.kpo.repository.WarehouseRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 
@@ -14,12 +14,12 @@ import java.util.Optional;
 public class ProductService {
 
     private final ProductRepository productRepository;
-    private final WarehouseRepository warehouseRepository;
+    private final CategoryRepository categoryRepository;
 
     public ProductService(ProductRepository productRepository,
-                          WarehouseRepository warehouseRepository) {
+                          CategoryRepository categoryRepository) {
         this.productRepository = productRepository;
-        this.warehouseRepository = warehouseRepository;
+        this.categoryRepository = categoryRepository;
     }
 
     public List<Product> getAllProducts() {
@@ -31,7 +31,7 @@ public class ProductService {
     }
 
     public Product createProduct(Product product) {
-        product.setWarehouse(resolveWarehouse(product));
+        product.setCategory(resolveCategory(product.getCategory()));
         return productRepository.save(product);
     }
 
@@ -39,8 +39,8 @@ public class ProductService {
         return productRepository.findById(id)
                 .map(existing -> {
                     existing.setName(product.getName());
-                    existing.setCount(product.getCount());
-                    existing.setWarehouse(resolveWarehouse(product));
+                    existing.setInfo(product.getInfo());
+                    existing.setCategory(resolveCategory(product.getCategory()));
                     return productRepository.save(existing);
                 });
     }
@@ -49,11 +49,11 @@ public class ProductService {
         productRepository.deleteById(id);
     }
 
-    private Warehouse resolveWarehouse(Product product) {
-        if (product.getWarehouse() == null || product.getWarehouse().getId() == null) {
-            throw new IllegalArgumentException("Warehouse id is required");
+    private Category resolveCategory(Category category) {
+        if (category == null || category.getId() == null) {
+            throw new IllegalArgumentException("Category id is required");
         }
-        return warehouseRepository.findById(product.getWarehouse().getId())
-                .orElseThrow(() -> new EntityNotFoundException("Warehouse not found"));
+        return categoryRepository.findById(category.getId())
+                .orElseThrow(() -> new EntityNotFoundException("Category not found"));
     }
 }
