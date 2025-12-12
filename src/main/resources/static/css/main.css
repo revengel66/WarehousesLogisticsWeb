@@ -526,6 +526,34 @@ body {
     border-bottom: none;
 }
 
+.report-preview {
+    border: 1px dashed rgba(15, 23, 42, 0.2);
+    border-radius: 20px;
+    padding: 1.5rem;
+    background: #fff;
+    position: relative;
+    margin-top: 2rem;
+}
+
+.report-preview__badge {
+    position: absolute;
+    top: -12px;
+    left: 24px;
+    background: #0f172a;
+    color: #fff;
+    padding: 2px 12px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.report-preview__title {
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}
+
 .movement-info-icon {
     width: 48px;
     height: 48px;

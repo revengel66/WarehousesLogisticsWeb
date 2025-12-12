@@ -37,6 +37,7 @@ public class SecurityConfig {
                                 "/counterparties/page",
                                 "/employees/page",
                                 "/movements/page",
+                                "/reports/page",
                                 "/deliveries",
                                 "/deliveries/**",
                                 "/shipments",

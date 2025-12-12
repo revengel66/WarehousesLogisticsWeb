@@ -33,6 +33,9 @@
                 <a class="nav-link px-0 text-dark"
                    th:classappend="${activePage} == 'movements' ? ' active fw-semibold' : ''"
                    th:href="@{/movements/page}">Движения</a>
+                <a class="nav-link px-0 text-dark"
+                   th:classappend="${activePage} == 'reports' ? ' active fw-semibold' : ''"
+                   th:href="@{/reports/page}">Отчёты</a>
 
             </nav>
             <button class="btn btn-outline-dark px-4" type="button" data-bs-toggle="modal"
