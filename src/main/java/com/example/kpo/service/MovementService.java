@@ -19,8 +19,13 @@ import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 @Service
 public class MovementService {
@@ -71,10 +76,13 @@ public class MovementService {
     public Optional<Movement> updateMovement(Long id, Movement movement) {
         return movementRepository.findById(id)
                 .map(existing -> {
-                    revertMovement(existing);
+                    Movement previousState = cloneMovement(existing);
                     copyAndResolveRelations(movement, existing);
                     validateRelations(existing);
-                    applyMovement(existing);
+                    if (!applyMovementDelta(previousState, existing)) {
+                        revertMovement(previousState);
+                        applyMovement(existing);
+                    }
                     return movementRepository.save(existing);
                 });
     }
@@ -268,6 +276,167 @@ public class MovementService {
         } else {
             stock.setQuantity(nextQuantity);
             warehouseProductRepository.save(stock);
+        }
+    }
+
+    private Movement cloneMovement(Movement source) {
+        Movement clone = new Movement();
+        clone.setType(source.getType());
+        clone.setWarehouse(source.getWarehouse());
+        clone.setTargetWarehouse(source.getTargetWarehouse());
+        clone.setEmployee(source.getEmployee());
+        clone.setTargetEmployee(source.getTargetEmployee());
+        clone.setCounterparty(source.getCounterparty());
+        List<MovementProduct> snapshotItems = new ArrayList<>();
+        if (source.getItems() != null) {
+            for (MovementProduct item : source.getItems()) {
+                MovementProduct clonedItem = new MovementProduct();
+                clonedItem.setMovement(clone);
+                clonedItem.setProduct(item.getProduct());
+                clonedItem.setQuantity(item.getQuantity());
+                snapshotItems.add(clonedItem);
+            }
+        }
+        clone.setItems(snapshotItems);
+        return clone;
+    }
+
+    private boolean applyMovementDelta(Movement previous, Movement current) {
+        if (previous.getType() != current.getType()) {
+            return false;
+        }
+        return switch (current.getType()) {
+            case INBOUND -> applyInboundDelta(previous, current);
+            case OUTBOUND -> applyOutboundDelta(previous, current);
+            case TRANSFER -> applyTransferDelta(previous, current);
+        };
+    }
+
+    private boolean applyInboundDelta(Movement previous, Movement current) {
+        if (!sameWarehouse(previous.getWarehouse(), current.getWarehouse())) {
+            return false;
+        }
+        Map<Long, ProductQuantity> previousItems = aggregateItems(previous.getItems());
+        Map<Long, ProductQuantity> currentItems = aggregateItems(current.getItems());
+        Set<Long> productIds = new HashSet<>();
+        productIds.addAll(previousItems.keySet());
+        productIds.addAll(currentItems.keySet());
+        for (Long productId : productIds) {
+            int prevQuantity = previousItems.containsKey(productId) ? previousItems.get(productId).quantity : 0;
+            int currQuantity = currentItems.containsKey(productId) ? currentItems.get(productId).quantity : 0;
+            int delta = currQuantity - prevQuantity;
+            if (delta == 0) {
+                continue;
+            }
+            Product product = currentItems.containsKey(productId)
+                    ? currentItems.get(productId).product
+                    : previousItems.get(productId).product;
+            if (delta > 0) {
+                increaseStock(current.getWarehouse(), product, delta);
+            } else {
+                decreaseStock(current.getWarehouse(), product, -delta);
+            }
+        }
+        return true;
+    }
+
+    private boolean applyOutboundDelta(Movement previous, Movement current) {
+        if (!sameWarehouse(previous.getWarehouse(), current.getWarehouse())) {
+            return false;
+        }
+        Map<Long, ProductQuantity> previousItems = aggregateItems(previous.getItems());
+        Map<Long, ProductQuantity> currentItems = aggregateItems(current.getItems());
+        Set<Long> productIds = new HashSet<>();
+        productIds.addAll(previousItems.keySet());
+        productIds.addAll(currentItems.keySet());
+        for (Long productId : productIds) {
+            int prevQuantity = previousItems.containsKey(productId) ? previousItems.get(productId).quantity : 0;
+            int currQuantity = currentItems.containsKey(productId) ? currentItems.get(productId).quantity : 0;
+            int delta = prevQuantity - currQuantity;
+            if (delta == 0) {
+                continue;
+            }
+            Product product = currentItems.containsKey(productId)
+                    ? currentItems.get(productId).product
+                    : previousItems.get(productId).product;
+            if (delta > 0) {
+                increaseStock(current.getWarehouse(), product, delta);
+            } else {
+                decreaseStock(current.getWarehouse(), product, -delta);
+            }
+        }
+        return true;
+    }
+
+    private boolean applyTransferDelta(Movement previous, Movement current) {
+        if (!sameWarehouse(previous.getWarehouse(), current.getWarehouse())
+                || !sameWarehouse(previous.getTargetWarehouse(), current.getTargetWarehouse())) {
+            return false;
+        }
+        Map<Long, ProductQuantity> previousItems = aggregateItems(previous.getItems());
+        Map<Long, ProductQuantity> currentItems = aggregateItems(current.getItems());
+        Set<Long> productIds = new HashSet<>();
+        productIds.addAll(previousItems.keySet());
+        productIds.addAll(currentItems.keySet());
+        for (Long productId : productIds) {
+            int prevQuantity = previousItems.containsKey(productId) ? previousItems.get(productId).quantity : 0;
+            int currQuantity = currentItems.containsKey(productId) ? currentItems.get(productId).quantity : 0;
+            int delta = currQuantity - prevQuantity;
+            if (delta == 0) {
+                continue;
+            }
+            Product product = currentItems.containsKey(productId)
+                    ? currentItems.get(productId).product
+                    : previousItems.get(productId).product;
+            if (delta > 0) {
+                decreaseStock(current.getWarehouse(), product, delta);
+                increaseStock(current.getTargetWarehouse(), product, delta);
+            } else {
+                int amount = -delta;
+                increaseStock(current.getWarehouse(), product, amount);
+                decreaseStock(current.getTargetWarehouse(), product, amount);
+            }
+        }
+        return true;
+    }
+
+    private Map<Long, ProductQuantity> aggregateItems(List<MovementProduct> items) {
+        Map<Long, ProductQuantity> result = new HashMap<>();
+        if (items == null) {
+            return result;
+        }
+        for (MovementProduct item : items) {
+            if (item.getProduct() == null || item.getProduct().getId() == null) {
+                continue;
+            }
+            result.compute(item.getProduct().getId(), (id, state) -> {
+                if (state == null) {
+                    return new ProductQuantity(item.getProduct(), item.getQuantity());
+                }
+                state.quantity += item.getQuantity();
+                return state;
+            });
+        }
+        return result;
+    }
+
+    private boolean sameWarehouse(Warehouse left, Warehouse right) {
+        if (left == null && right == null) {
+            return true;
+        }
+        if (left == null || right == null) {
+            return false;
+        }
+        return Objects.equals(left.getId(), right.getId());
+    }
+
+    private static class ProductQuantity {
+        private final Product product;
+        private int quantity;
+
+        private ProductQuantity(Product product, int quantity) {
+            this.product = product;
+            this.quantity = quantity;
         }
     }
 }

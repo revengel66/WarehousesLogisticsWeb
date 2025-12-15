@@ -50,6 +50,11 @@ public class PageController {
         return "employees";
     }
 
+    @GetMapping(value = "/reports/page", produces = MediaType.TEXT_HTML_VALUE)
+    public String reportsPage() {
+        return "reports";
+    }
+
     @GetMapping(value = "/deliveries", produces = MediaType.TEXT_HTML_VALUE)
     public String deliveriesPage(Model model) {
         configureMovementList(model, MovementType.INBOUND, "Поставки", "/deliveries");

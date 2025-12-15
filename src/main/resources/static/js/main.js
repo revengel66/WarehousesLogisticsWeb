@@ -43,6 +43,7 @@
         initProductsPage();
         initCounterpartiesPage();
         initEmployeesPage();
+        initReportsPage();
         initPhoneMasks();
     };
 
@@ -1233,6 +1234,132 @@
         }
 
         loadCategoriesOptions().then(loadProducts);
+    }
+
+    function initReportsPage() {
+        const root = document.getElementById('reportsPage');
+        if (!root) {
+            return;
+        }
+
+        const warehouseSelect = document.getElementById('reportWarehouseSelect');
+        const categorySelect = document.getElementById('reportCategorySelect');
+        const form = document.getElementById('reportFilterForm');
+        const downloadButton = document.getElementById('reportDownloadBtn');
+        const downloadSpinner = downloadButton ? downloadButton.querySelector('.spinner-border') : null;
+        const resetButton = document.getElementById('reportResetBtn');
+        const reportDateInput = document.getElementById('reportDate');
+        const feedbackModal = createFeedbackModal('reportsAlertModal');
+        const toast = window.showAppToast || (() => undefined);
+
+        const toggleLoading = (state) => {
+            if (!downloadButton) {
+                return;
+            }
+            downloadButton.disabled = state;
+            if (downloadSpinner) {
+                downloadSpinner.classList.toggle('d-none', !state);
+            }
+        };
+
+        const loadReferences = async () => {
+            try {
+                const [warehouses, categories] = await Promise.all([
+                    apiRequest('/warehouses'),
+                    apiRequest('/categories')
+                ]);
+                populateMultiSelect(warehouseSelect, warehouses);
+                populateMultiSelect(categorySelect, categories);
+            } catch (error) {
+                showReferenceError(error, feedbackModal);
+            }
+        };
+
+        const populateMultiSelect = (select, items) => {
+            if (!select) {
+                return;
+            }
+            const options = items && items.length
+                ? items
+                    .slice()
+                    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                    .map((item) => `<option value="${item.id}">${escapeHtml(item.name || '')}</option>`)
+                : ['<option disabled>Нет данных</option>'];
+            select.innerHTML = options.join('');
+        };
+
+        const collectSelected = (select) => {
+            if (!select) {
+                return [];
+            }
+            return Array.from(select.selectedOptions || [])
+                .map((option) => Number(option.value))
+                .filter((value) => !Number.isNaN(value));
+        };
+
+        form?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!localStorage.getItem('authToken')) {
+                window.location.href = '/login';
+                return;
+            }
+            toggleLoading(true);
+            const payload = {
+                reportDate: reportDateInput?.value || null,
+                warehouseIds: collectSelected(warehouseSelect),
+                categoryIds: collectSelected(categorySelect)
+            };
+            try {
+                const response = await fetch('/reports/stock', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/pdf',
+                        'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) {
+                    const message = await response.text();
+                    const error = new Error(message || `Ошибка ${response.status}`);
+                    error.status = response.status;
+                    throw error;
+                }
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                const timestamp = new Date().toISOString().replace(/[:T]/g, '').slice(0, 13);
+                link.href = url;
+                link.download = `stock-report-${timestamp}.pdf`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+                toast('Отчёт сформирован');
+            } catch (error) {
+                if (!handleAuthError(error, feedbackModal)) {
+                    feedbackModal.show({
+                        title: 'Не удалось сформировать отчёт',
+                        message: error.message || 'Попробуйте повторить попытку позже.'
+                    });
+                }
+            } finally {
+                toggleLoading(false);
+            }
+        });
+
+        resetButton?.addEventListener('click', () => {
+            reportDateInput && (reportDateInput.value = '');
+            [warehouseSelect, categorySelect].forEach((select) => {
+                if (select) {
+                    Array.from(select.options).forEach((option) => {
+                        option.selected = false;
+                    });
+                }
+            });
+        });
+
+        loadReferences();
     }
 
     function initCounterpartiesPage() {

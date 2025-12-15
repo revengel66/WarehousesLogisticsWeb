@@ -1,8 +1,10 @@
 package com.example.kpo.entity;
 
+import com.example.kpo.util.LocalDateTimeAttributeConverter;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Convert;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
@@ -30,6 +32,7 @@ public class Movement {
 
     @NotNull(message = "Movement date is required")
     @Column(nullable = false)
+    @Convert(converter = LocalDateTimeAttributeConverter.class)
     private LocalDateTime date;
 
     @NotNull(message = "Movement type is required")
