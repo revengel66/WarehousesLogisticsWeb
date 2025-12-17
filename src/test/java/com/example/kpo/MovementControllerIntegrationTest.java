@@ -173,6 +173,74 @@ class MovementControllerIntegrationTest {
     }
 
     @Test
+    @DisplayName("POST /movements отклоняет приход без контрагента")
+    void createInboundMovementValidationError() throws Exception {
+        Movement payload = buildMovementPayload(MovementType.INBOUND, sourceWarehouse, null,
+                employee, null, null, product, 5);
+
+        mockMvc.perform(post("/movements")
+                        .header("Authorization", "Bearer " + obtainToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", is("Counterparty is required for inbound movement")));
+    }
+
+    @Test
+    @DisplayName("POST /movements создаёт отгрузку (OUTBOUND)")
+    void createOutboundMovementReturnsCreated() throws Exception {
+        warehouseProductRepository.save(new WarehouseProduct(sourceWarehouse, product, 5));
+        Movement payload = buildMovementPayload(MovementType.OUTBOUND, sourceWarehouse, null,
+                employee, null, counterparty, product, 5);
+
+        mockMvc.perform(post("/movements")
+                        .header("Authorization", "Bearer " + obtainToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.type", is("OUTBOUND")))
+                .andExpect(jsonPath("$.counterparty.id", is(counterparty.getId().intValue())))
+                .andExpect(jsonPath("$.items[0].quantity", is(5)))
+                .andExpect(jsonPath("$.targetWarehouse").doesNotExist());
+
+        assertThat(warehouseProductRepository.findByWarehouseAndProduct(sourceWarehouse, product)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("POST /movements отклоняет отгрузку без контрагента")
+    void createOutboundMovementValidationError() throws Exception {
+        warehouseProductRepository.save(new WarehouseProduct(sourceWarehouse, product, 5));
+        Movement payload = buildMovementPayload(MovementType.OUTBOUND, sourceWarehouse, null,
+                employee, null, null, product, 5);
+
+        mockMvc.perform(post("/movements")
+                        .header("Authorization", "Bearer " + obtainToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", is("Counterparty is required for outbound movement")));
+    }
+
+    @Test
+    @DisplayName("POST /movements отклоняет отгрузку при недостатке остатков")
+    void createOutboundMovementInsufficientStock() throws Exception {
+        warehouseProductRepository.save(new WarehouseProduct(sourceWarehouse, product, 2));
+        Movement payload = buildMovementPayload(MovementType.OUTBOUND, sourceWarehouse, null,
+                employee, null, counterparty, product, 5);
+
+        mockMvc.perform(post("/movements")
+                        .header("Authorization", "Bearer " + obtainToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error",
+                        is("Not enough product " + product.getId() + " on warehouse " + sourceWarehouse.getId())));
+
+        WarehouseProduct stock = warehouseProductRepository.findByWarehouseAndProduct(sourceWarehouse, product).orElseThrow();
+        assertThat(stock.getQuantity()).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("POST /movements создаёт перемещение (TRANSFER)")
     void createTransferMovementReturnsCreated() throws Exception {
         warehouseProductRepository.save(new WarehouseProduct(sourceWarehouse, product, 10));
@@ -192,6 +260,21 @@ class MovementControllerIntegrationTest {
         WarehouseProduct targetStock = warehouseProductRepository.findByWarehouseAndProduct(targetWarehouse, product).orElseThrow();
         assertThat(sourceStock.getQuantity()).isEqualTo(7);
         assertThat(targetStock.getQuantity()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("POST /movements отклоняет трансфер без целевого склада")
+    void createTransferMovementRequiresTargetWarehouse() throws Exception {
+        warehouseProductRepository.save(new WarehouseProduct(sourceWarehouse, product, 10));
+        Movement payload = buildMovementPayload(MovementType.TRANSFER, sourceWarehouse, null,
+                employee, targetEmployee, null, product, 3);
+
+        mockMvc.perform(post("/movements")
+                        .header("Authorization", "Bearer " + obtainToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", is("Target warehouse is required for transfer movement")));
     }
 
     @Test
