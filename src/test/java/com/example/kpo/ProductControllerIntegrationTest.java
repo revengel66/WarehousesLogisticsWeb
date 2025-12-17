@@ -3,12 +3,19 @@ package com.example.kpo;
 import com.example.kpo.dto.LoginRequest;
 import com.example.kpo.entity.Admin;
 import com.example.kpo.entity.Category;
+import com.example.kpo.entity.Employee;
+import com.example.kpo.entity.Movement;
+import com.example.kpo.entity.MovementProduct;
+import com.example.kpo.entity.MovementType;
 import com.example.kpo.entity.Product;
+import com.example.kpo.entity.Warehouse;
 import com.example.kpo.repository.AdminRepository;
 import com.example.kpo.repository.CategoryRepository;
+import com.example.kpo.repository.EmployeeRepository;
 import com.example.kpo.repository.MovementRepository;
 import com.example.kpo.repository.ProductRepository;
 import com.example.kpo.repository.WarehouseProductRepository;
+import com.example.kpo.repository.WarehouseRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,6 +27,9 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+
+import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
@@ -55,6 +65,12 @@ class ProductControllerIntegrationTest {
     private WarehouseProductRepository warehouseProductRepository;
 
     @Autowired
+    private WarehouseRepository warehouseRepository;
+
+    @Autowired
+    private EmployeeRepository employeeRepository;
+
+    @Autowired
     private AdminRepository adminRepository;
 
     @Autowired
@@ -70,6 +86,8 @@ class ProductControllerIntegrationTest {
         movementRepository.deleteAll();
         warehouseProductRepository.deleteAll();
         productRepository.deleteAll();
+        employeeRepository.deleteAll();
+        warehouseRepository.deleteAll();
         categoryRepository.deleteAll();
         adminRepository.deleteAll();
 
@@ -220,6 +238,33 @@ class ProductControllerIntegrationTest {
         mockMvc.perform(delete("/products/{id}", 999)
                         .header("Authorization", "Bearer " + obtainToken()))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("DELETE /products/{id} возвращает 400 если товар участвует в движении")
+    void deleteProductBlockedWhenUsedInMovement() throws Exception {
+        Warehouse warehouse = warehouseRepository.save(new Warehouse(null, "Склад", null));
+        Employee employee = employeeRepository.save(new Employee(null, "Сотрудник", "+79000000000", null));
+        Product product = new Product(null, "Товар для движения", null);
+        product.setCategory(defaultCategory);
+        product = productRepository.save(product);
+
+        Movement movement = new Movement();
+        movement.setDate(LocalDateTime.now());
+        movement.setType(MovementType.INBOUND);
+        movement.setWarehouse(warehouse);
+        movement.setEmployee(employee);
+        MovementProduct item = new MovementProduct();
+        item.setMovement(movement);
+        item.setProduct(product);
+        item.setQuantity(1);
+        movement.setItems(List.of(item));
+        movementRepository.save(movement);
+
+        mockMvc.perform(delete("/products/{id}", product.getId())
+                        .header("Authorization", "Bearer " + obtainToken()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", is("Product is used in movements or stock and cannot be deleted")));
     }
 
     private Category refCategory(Category category) {
