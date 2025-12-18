@@ -109,13 +109,13 @@ public class ForecastService {
         for (double alpha : ALPHA_GRID) {
             for (double beta : BETA_GRID) {
                 // Для каждой пары (α,β): строится прогноз на validation-часть
+                // Cчитается ошибка (MAE/MAPE),
+                // MAE - Показывает среднюю ошибку в единицах товара.
+                // MAPE - Показывает среднюю ошибку в процентах, что удобно для сравнения товаров с разным объёмом спроса.
                 ForecastMetrics metrics = validateHoltCandidate(history, trainingSize, validationSize, alpha, beta);
                 if (metrics == null) {
                     continue;
                 }
-                // Cчитается ошибка (MAE/MAPE),
-                // MAE - Показывает среднюю ошибку в единицах товара.
-                // MAPE - Показывает среднюю ошибку в процентах, что удобно для сравнения товаров с разным объёмом спроса.
                 // Выбирается пара с минимальной ошибкой
                 if (best == null || metrics.mae() < best.metrics().orElseThrow().mae()) {
                     best = new ForecastEvaluation(alpha, beta, Optional.of(metrics));
@@ -197,6 +197,8 @@ public class ForecastService {
 
     // Подсчет метрик качества (MAE и MAPE) по спискам прогнозов и фактических значений.
     // MAE — средняя абсолютная ошибка, MAPE — средняя процентная ошибка.
+    // MAE = ∑(y1-y2)/n  средняя абсолютная ошибка в количествах
+    // MAPE = ∑((y1-y2)/y1)/n*100
     private ForecastMetrics calculateMetrics(List<Double> predictions, List<Double> actuals) {
         DoubleSummaryStatistics maeStats = new DoubleSummaryStatistics();
         double mapeSum = 0;
