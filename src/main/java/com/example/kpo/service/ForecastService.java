@@ -21,7 +21,7 @@ import java.util.Optional;
 @Service
 public class ForecastService {
 
-    private static final double[] ALPHA_GRID = {0.2, 0.4, 0.6, 0.8};
+    private static final double[] ALPHA_RID = {0.2, 0.4, 0.6, 0.8};
     private static final double[] BETA_GRID = {0.1, 0.2, 0.3, 0.4};
     private static final int MIN_HISTORY_POINTS = 5;
     private final DemandSeriesService demandSeriesService;
@@ -104,11 +104,11 @@ public class ForecastService {
             return new ForecastEvaluation(ALPHA_GRID[0], BETA_GRID[0], Optional.empty());
         }
 
-        // В коде используется перебор по сетке (grid): есть набор значений α ( 0.1, 0.2, …), есть набор значений β
+        // В коде используется перебор по сетке (grid): есть набор значений α, есть набор значений β
         ForecastEvaluation best = null;
         for (double alpha : ALPHA_GRID) {
             for (double beta : BETA_GRID) {
-                // Для каждой пары (α,β): строится прогноз на validation-часть
+                // Для каждой пары (α,β): строится прогноз на validation
                 // Cчитается ошибка (MAE/MAPE),
                 // MAE - Показывает среднюю ошибку в единицах товара.
                 // MAPE - Показывает среднюю ошибку в процентах, что удобно для сравнения товаров с разным объёмом спроса.
