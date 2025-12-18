@@ -23,20 +23,15 @@ public class ForecastService {
 
     private static final double[] ALPHA_GRID = {0.2, 0.4, 0.6, 0.8};
     private static final double[] BETA_GRID = {0.1, 0.2, 0.3, 0.4};
-    private static final double[] CROSTON_ALPHA_GRID = {0.1, 0.2, 0.3, 0.4};
     private static final int MIN_HISTORY_POINTS = 5;
-    private static final int MIN_NONZERO_POINTS = 2;
-    private static final double INTERMITTENT_ZERO_RATIO = 0.4;
-    private static final double INTERMITTENT_INTERVAL_THRESHOLD = 1.5;
-    private static final String MODEL_HOLT = "HOLT";
-    private static final String MODEL_CROSTON = "CROSTON";
-
     private final DemandSeriesService demandSeriesService;
 
+    // Инжектируем сервис, который предоставляет исторические ряды спроса по товару.
     public ForecastService(DemandSeriesService demandSeriesService) {
         this.demandSeriesService = demandSeriesService;
     }
 
+    // Упрощенный вызов: прогноз по дням с базовой детализацией.
     public ForecastResult forecastProduct(Long productId,
                                           int historyDays,
                                           int validationWindow,
@@ -44,6 +39,8 @@ public class ForecastService {
         return forecastProduct(productId, historyDays, validationWindow, horizonDays, ForecastGranularity.DAY);
     }
 
+    // Главная точка входа: загружаем историю, подбираем параметры Holt и формируем прогноз.
+    // История используется как обучающая выборка, прогноз строится на будущие дни/недели.
     public ForecastResult forecastProduct(Long productId,
                                           int historyDays,
                                           int validationWindow,
@@ -52,32 +49,34 @@ public class ForecastService {
         if (horizonDays <= 0) {
             throw new IllegalArgumentException("Forecast horizon must be greater than 0");
         }
+
+        //1. Определяем, сколько дней истории грузить
         int dailyHistoryDays = granularity == ForecastGranularity.WEEK
                 ? historyDays * 7
                 : historyDays;
+        //2. Загружаем ДНЕВНОЙ временной ряд
         DemandSeries dailySeries = demandSeriesService.loadDailyDemandSeries(productId, dailyHistoryDays);
+
+        //3. Агрегация: дни → недели
         DemandSeries series = granularity == ForecastGranularity.WEEK
                 ? aggregateWeeklySeries(dailySeries, historyDays)
                 : dailySeries;
         List<DemandPoint> history = series.points();
-        IntermittencyStats intermittency = analyzeIntermittency(history);
-        boolean insufficient = series.insufficientData()
-                || history.size() < MIN_HISTORY_POINTS
-                || intermittency.nonZeroCount() < MIN_NONZERO_POINTS;
 
-        boolean useCroston = intermittency.isIntermittent();
-        ForecastEvaluation evaluation = useCroston
-                ? evaluateCrostonParameters(history, validationWindow)
-                : evaluateHoltParameters(history, validationWindow);
+        //4. Проверка «данных достаточно?»
+        boolean insufficient = series.insufficientData()
+                || history.size() < MIN_HISTORY_POINTS;
+
+        //5. Подбор параметров Holt (alpha / beta) →
+        ForecastEvaluation evaluation = evaluateHoltParameters(history, validationWindow);
         double alpha = evaluation.alpha();
         double beta = evaluation.beta();
         ForecastMetrics metrics = evaluation.metrics().orElse(null);
 
+        //6. Генерация финального прогноза →
         List<ForecastPoint> forecastPoints = insufficient
                 ? List.of()
-                : (MODEL_CROSTON.equals(evaluation.model())
-                    ? generateCrostonForecast(history, horizonDays, alpha, granularity)
-                    : generateHoltForecast(history, horizonDays, alpha, beta, granularity));
+                : generateHoltForecast(history, horizonDays, alpha, beta, granularity);
 
         return new ForecastResult(
                 productId,
@@ -86,65 +85,51 @@ public class ForecastService {
                 metrics,
                 alpha,
                 beta,
-                insufficient,
-                evaluation.model()
+                insufficient
         );
     }
 
+    // Подбор параметров Holt (alpha/beta) через разбиение на обучение и валидацию.
+    // α (alpha) определяет, насколько сильно новое наблюдение влияет на уровень;
+    // β (beta) определяет, насколько быстро изменяется тренд.
     private ForecastEvaluation evaluateHoltParameters(List<DemandPoint> history, int validationWindow) {
+
         if (history.size() < MIN_HISTORY_POINTS) {
-            return new ForecastEvaluation(MODEL_HOLT, ALPHA_GRID[0], BETA_GRID[0], Optional.empty());
+            return new ForecastEvaluation(ALPHA_GRID[0], BETA_GRID[0], Optional.empty());
         }
+        // Делим историю на две части: train — на этом “обучаем”, validation — на этом проверяем качество
         int validationSize = Math.min(validationWindow, Math.max(1, history.size() / 4));
         int trainingSize = history.size() - validationSize;
         if (trainingSize < 2) {
-            return new ForecastEvaluation(MODEL_HOLT, ALPHA_GRID[0], BETA_GRID[0], Optional.empty());
+            return new ForecastEvaluation(ALPHA_GRID[0], BETA_GRID[0], Optional.empty());
         }
 
+        // В коде используется перебор по сетке (grid): есть набор значений α ( 0.1, 0.2, …), есть набор значений β
         ForecastEvaluation best = null;
         for (double alpha : ALPHA_GRID) {
             for (double beta : BETA_GRID) {
+                // Для каждой пары (α,β): строится прогноз на validation-часть
                 ForecastMetrics metrics = validateHoltCandidate(history, trainingSize, validationSize, alpha, beta);
                 if (metrics == null) {
                     continue;
                 }
+                // Cчитается ошибка (MAE/MAPE),
+                // MAE - Показывает среднюю ошибку в единицах товара.
+                // MAPE - Показывает среднюю ошибку в процентах, что удобно для сравнения товаров с разным объёмом спроса.
+                // Выбирается пара с минимальной ошибкой
                 if (best == null || metrics.mae() < best.metrics().orElseThrow().mae()) {
-                    best = new ForecastEvaluation(MODEL_HOLT, alpha, beta, Optional.of(metrics));
+                    best = new ForecastEvaluation(alpha, beta, Optional.of(metrics));
                 }
             }
         }
         if (best == null) {
-            return new ForecastEvaluation(MODEL_HOLT, ALPHA_GRID[0], BETA_GRID[0], Optional.empty());
+            return new ForecastEvaluation(ALPHA_GRID[0], BETA_GRID[0], Optional.empty());
         }
         return best;
     }
 
-    private ForecastEvaluation evaluateCrostonParameters(List<DemandPoint> history, int validationWindow) {
-        if (history.size() < MIN_HISTORY_POINTS) {
-            return new ForecastEvaluation(MODEL_CROSTON, CROSTON_ALPHA_GRID[0], 0, Optional.empty());
-        }
-        int validationSize = Math.min(validationWindow, Math.max(1, history.size() / 4));
-        int trainingSize = history.size() - validationSize;
-        if (trainingSize < 2) {
-            return new ForecastEvaluation(MODEL_CROSTON, CROSTON_ALPHA_GRID[0], 0, Optional.empty());
-        }
-
-        ForecastEvaluation best = null;
-        for (double alpha : CROSTON_ALPHA_GRID) {
-            ForecastMetrics metrics = validateCrostonCandidate(history, trainingSize, validationSize, alpha);
-            if (metrics == null) {
-                continue;
-            }
-            if (best == null || metrics.mae() < best.metrics().orElseThrow().mae()) {
-                best = new ForecastEvaluation(MODEL_CROSTON, alpha, 0, Optional.of(metrics));
-            }
-        }
-        if (best == null) {
-            return new ForecastEvaluation(MODEL_CROSTON, CROSTON_ALPHA_GRID[0], 0, Optional.empty());
-        }
-        return best;
-    }
-
+    // Проверка одного набора Holt: строим прогноз на валидацию и считаем ошибки.
+    // Сравниваем прогноз и фактические значения на отложенном участке.
     private ForecastMetrics validateHoltCandidate(List<DemandPoint> history,
                                                   int trainingSize,
                                                   int validationSize,
@@ -156,8 +141,10 @@ public class ForecastService {
         if (trainingValues.size() < 2) {
             return null;
         }
+        // Выполняем сглаживание Holt по истории и возвращаем финальные уровень и тренд. →
         HoltState state = runHolt(trainingValues, alpha, beta);
         List<Double> predictions = new ArrayList<>();
+        //forecast(k) = level + k × trend. Это линейное продолжение текущей тенденции спроса
         for (int i = 1; i <= validationSize; i++) {
             predictions.add(state.level() + i * state.trend());
         }
@@ -167,28 +154,8 @@ public class ForecastService {
         return calculateMetrics(predictions, actuals);
     }
 
-    private ForecastMetrics validateCrostonCandidate(List<DemandPoint> history,
-                                                     int trainingSize,
-                                                     int validationSize,
-                                                     double alpha) {
-        List<Double> trainingValues = history.subList(0, trainingSize).stream()
-                .map(point -> (double) point.quantity())
-                .toList();
-        CrostonState state = runCroston(trainingValues, alpha);
-        if (state == null) {
-            return null;
-        }
-        double forecastValue = Math.max(0, state.demand() / state.interval());
-        List<Double> predictions = new ArrayList<>(validationSize);
-        for (int i = 0; i < validationSize; i++) {
-            predictions.add(forecastValue);
-        }
-        List<Double> actuals = history.subList(trainingSize, trainingSize + validationSize).stream()
-                .map(point -> (double) point.quantity())
-                .toList();
-        return calculateMetrics(predictions, actuals);
-    }
-
+    // Построение прогноза Holt: берем финальные уровень и тренд и выдаем точки на горизонт.
+    // На каждом шаге значение = уровень + шаг * тренд (без отрицательных значений).
     private List<ForecastPoint> generateHoltForecast(List<DemandPoint> history,
                                                      int horizon,
                                                      double alpha,
@@ -197,38 +164,26 @@ public class ForecastService {
         List<Double> values = history.stream()
                 .map(point -> (double) point.quantity())
                 .toList();
+        //Снова запускаем Holt — уже на ВСЕЙ истории →
         HoltState state = runHolt(values, alpha, beta);
         List<ForecastPoint> points = new ArrayList<>(horizon);
         LocalDate startDate = history.get(history.size() - 1).date();
+        // Строим точки прогноза
         for (int step = 1; step <= horizon; step++) {
             double prediction = Math.max(0, state.level() + step * state.trend());
+            //Формируем даты
             points.add(new ForecastPoint(advanceDate(startDate, step, granularity), prediction));
         }
         return points;
     }
 
-    private List<ForecastPoint> generateCrostonForecast(List<DemandPoint> history,
-                                                        int horizon,
-                                                        double alpha,
-                                                        ForecastGranularity granularity) {
-        List<Double> values = history.stream()
-                .map(point -> (double) point.quantity())
-                .toList();
-        CrostonState state = runCroston(values, alpha);
-        if (state == null) {
-            return List.of();
-        }
-        double forecastValue = Math.max(0, state.demand() / state.interval());
-        List<ForecastPoint> points = new ArrayList<>(horizon);
-        LocalDate startDate = history.get(history.size() - 1).date();
-        for (int step = 1; step <= horizon; step++) {
-            points.add(new ForecastPoint(advanceDate(startDate, step, granularity), forecastValue));
-        }
-        return points;
-    }
-
+    // Выполняем сглаживание Holt по истории и возвращаем финальные уровень и тренд.
+    // Уровень — сколько товара в среднем покупают в текущий момент времени
+    // Тренд — растёт спрос или падает и на сколько за период.
     private HoltState runHolt(List<Double> values, double alpha, double beta) {
+        //level = y[0]. Первое наблюдение временного ряда
         double level = values.get(0);
+        //trend = y[1] - y[0]. Разность между первыми значениями
         double trend = values.size() > 1 ? values.get(1) - values.get(0) : 0;
         double prevLevel;
         for (int i = 1; i < values.size(); i++) {
@@ -240,32 +195,8 @@ public class ForecastService {
         return new HoltState(level, trend);
     }
 
-    private CrostonState runCroston(List<Double> values, double alpha) {
-        double demand = 0;
-        double interval = 0;
-        boolean initialized = false;
-        int gap = 0;
-        for (double observation : values) {
-            gap++;
-            if (observation <= 0) {
-                continue;
-            }
-            if (!initialized) {
-                demand = observation;
-                interval = gap;
-                initialized = true;
-            } else {
-                demand = alpha * observation + (1 - alpha) * demand;
-                interval = alpha * gap + (1 - alpha) * interval;
-            }
-            gap = 0;
-        }
-        if (!initialized) {
-            return null;
-        }
-        return new CrostonState(demand, interval);
-    }
-
+    // Подсчет метрик качества (MAE и MAPE) по спискам прогнозов и фактических значений.
+    // MAE — средняя абсолютная ошибка, MAPE — средняя процентная ошибка.
     private ForecastMetrics calculateMetrics(List<Double> predictions, List<Double> actuals) {
         DoubleSummaryStatistics maeStats = new DoubleSummaryStatistics();
         double mapeSum = 0;
@@ -285,6 +216,7 @@ public class ForecastService {
         return new ForecastMetrics(mae, mape, (int) maeStats.getCount());
     }
 
+    // Агрегируем дневной спрос в недельный, выравнивая недели по понедельнику.
     private DemandSeries aggregateWeeklySeries(DemandSeries dailySeries, int historyWeeks) {
         Map<LocalDate, Long> weeklyTotals = new HashMap<>();
         for (DemandPoint point : dailySeries.points()) {
@@ -309,6 +241,7 @@ public class ForecastService {
         );
     }
 
+    // Сдвигаем дату вперед на шаг в зависимости от выбранной детализации.
     private LocalDate advanceDate(LocalDate startDate, int step, ForecastGranularity granularity) {
         if (granularity == ForecastGranularity.WEEK) {
             return startDate.plusWeeks(step);
@@ -316,47 +249,9 @@ public class ForecastService {
         return startDate.plusDays(step);
     }
 
-    private IntermittencyStats analyzeIntermittency(List<DemandPoint> history) {
-        if (history == null || history.isEmpty()) {
-            return new IntermittencyStats(1.0, 0, 0, true);
-        }
-        int zeroCount = 0;
-        int nonZeroCount = 0;
-        int gap = 0;
-        List<Integer> intervals = new ArrayList<>();
-        for (DemandPoint point : history) {
-            gap++;
-            if (point.quantity() <= 0) {
-                zeroCount++;
-                continue;
-            }
-            nonZeroCount++;
-            if (nonZeroCount > 1) {
-                intervals.add(gap);
-            }
-            gap = 0;
-        }
-        double zeroRatio = (double) zeroCount / history.size();
-        double averageInterval = intervals.isEmpty()
-                ? history.size()
-                : intervals.stream().mapToInt(Integer::intValue).average().orElse(0);
-        boolean intermittent = zeroRatio >= INTERMITTENT_ZERO_RATIO
-                || averageInterval >= INTERMITTENT_INTERVAL_THRESHOLD;
-        return new IntermittencyStats(zeroRatio, averageInterval, nonZeroCount, intermittent);
-    }
-
     private record HoltState(double level, double trend) {
     }
 
-    private record CrostonState(double demand, double interval) {
-    }
-
-    private record ForecastEvaluation(String model, double alpha, double beta, Optional<ForecastMetrics> metrics) {
-    }
-
-    private record IntermittencyStats(double zeroRatio,
-                                      double averageInterval,
-                                      int nonZeroCount,
-                                      boolean isIntermittent) {
+    private record ForecastEvaluation(double alpha, double beta, Optional<ForecastMetrics> metrics) {
     }
 }

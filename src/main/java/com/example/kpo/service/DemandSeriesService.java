@@ -29,6 +29,7 @@ public class DemandSeriesService {
     private final ProductRepository productRepository;
     private final Clock clock;
 
+    // Инжектируем репозитории и часы, чтобы можно было стабильно считать даты в тестах.
     public DemandSeriesService(MovementProductRepository movementProductRepository,
                                ProductRepository productRepository,
                                Clock clock) {
@@ -37,10 +38,13 @@ public class DemandSeriesService {
         this.clock = clock;
     }
 
+    // Упрощенный вызов: берём стандартное окно истории (DEFAULT_HISTORY_DAYS).
     public DemandSeries loadDailyDemandSeries(Long productId) {
         return loadDailyDemandSeries(productId, DEFAULT_HISTORY_DAYS);
     }
 
+    // Формируем дневной ряд спроса по товару за заданное количество дней.
+    // Спрос считается по отгрузкам (OUTBOUND), чтобы отражать реальное потребление.
     public DemandSeries loadDailyDemandSeries(Long productId, int historyDays) {
         if (historyDays <= 0) {
             throw new IllegalArgumentException("History window must be greater than 0");
@@ -80,6 +84,8 @@ public class DemandSeriesService {
         return new DemandSeries(product.getId(), startDate, endDate, List.copyOf(points), insufficientData);
     }
 
+    // Определяем последнюю дату по реальным отгрузкам.
+    // Если отгрузок нет, используем текущую дату по системным часам.
     private LocalDate determineEndDate(Product product) {
         LocalDateTime lastMovementDate = movementProductRepository.findLastMovementDate(product, MovementType.OUTBOUND);
         if (lastMovementDate != null) {

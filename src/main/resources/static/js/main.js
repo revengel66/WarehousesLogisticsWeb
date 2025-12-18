@@ -1601,8 +1601,6 @@
             const history = Array.isArray(result.history) ? result.history : [];
             const forecast = Array.isArray(result.forecast) ? result.forecast : [];
             const metrics = result.metrics || null;
-            const model = (result.model || 'Holt').toUpperCase();
-            const isCroston = model === 'CROSTON';
 
             if (resultBody) {
                 resultBody.classList.remove('d-none');
@@ -1666,22 +1664,17 @@
 
             const warningText = result.insufficientData
                 ? 'История отгрузок слишком короткая. Прогноз не построен.'
-                : (isCroston
-                    ? `Спрос прерывистый — прогноз показан как среднее ожидаемое значение ${unitAccusative}.`
-                    : (!forecast.length ? 'Прогноз не был построен из-за нехватки данных.' : ''));
+                : (!forecast.length ? 'Прогноз не был построен из-за нехватки данных.' : '');
             updateWarning(warningText);
 
-            const modelLabel = isCroston ? 'Croston' : 'Holt';
             const badges = [
-                {label: modelLabel},
+                {label: 'Holt'},
                 {label: `α=${formatDecimal(result.alpha)}`},
+                {label: `β=${formatDecimal(result.beta)}`},
                 {label: `окно ${context.historyDays} ${unitShort}`},
                 {label: `валидация ${context.validationWindow} ${unitShort}`},
                 {label: `горизонт ${context.horizonDays} ${unitShort}`}
             ];
-            if (!isCroston) {
-                badges.splice(2, 0, {label: `β=${formatDecimal(result.beta)}`});
-            }
             buildBadges(badges);
 
             renderChart(history, forecast);

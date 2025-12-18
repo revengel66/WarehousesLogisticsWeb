@@ -8,6 +8,5 @@ public record ForecastResult(Long productId,
                              ForecastMetrics metrics,
                              double alpha,
                              double beta,
-                             boolean insufficientData,
-                             String model) {
+                             boolean insufficientData) {
 }

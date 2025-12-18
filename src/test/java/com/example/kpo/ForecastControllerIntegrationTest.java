@@ -96,7 +96,7 @@ class ForecastControllerIntegrationTest {
                 new ForecastPoint(LocalDate.of(2024, 1, 4), 14.0)
         );
         ForecastMetrics metrics = new ForecastMetrics(1.5, 12.5, 2);
-        return new ForecastResult(2L, history, forecast, metrics, 0.4, 0.2, false, "HOLT");
+        return new ForecastResult(2L, history, forecast, metrics, 0.4, 0.2, false);
     }
 
     private String obtainToken() throws Exception {
