@@ -21,7 +21,7 @@ import java.util.Optional;
 @Service
 public class ForecastService {
 
-    private static final double[] ALPHA_RID = {0.2, 0.4, 0.6, 0.8};
+    private static final double[] ALPHA_GRID = {0.2, 0.4, 0.6, 0.8};
     private static final double[] BETA_GRID = {0.1, 0.2, 0.3, 0.4};
     private static final int MIN_HISTORY_POINTS = 5;
     private final DemandSeriesService demandSeriesService;
